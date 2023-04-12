@@ -70,41 +70,6 @@ func NewVerifier(saInformer coreinformers.ServiceAccountInformer, hmsAuthzURL st
 	return v, nil
 }
 
-// GSAEmail identifies a GCP service account in email format.
-type GSAEmail string
-
-// ServiceAccount identifies a K8s service account object by its namespace and name.  Empty
-// Namespace indicates the corresponding Kubernetes object was created in the "default" namespace.
-type ServiceAccount struct {
-	Namespace, Name string
-}
-
-// MarshalText implements the encoding.TextMarshaler interface.
-func (sa ServiceAccount) MarshalText() ([]byte, error) {
-	return []byte(sa.String()), nil
-}
-
-// String returns sa in a string as "<namespace>/<name>" or "default/<name>" if sa.Namespace is
-// empty.
-func (sa ServiceAccount) String() string {
-	if sa.Namespace == "" {
-		return fmt.Sprintf("default/%s", sa.Name)
-	}
-	return fmt.Sprintf("%s/%s", sa.Namespace, sa.Name)
-}
-
-func (sa ServiceAccount) Key() string {
-	return fmt.Sprintf("%s/%s", sa.Namespace, sa.Name)
-}
-
-func saFromKey(key string) (ServiceAccount, error) {
-	namespace, name, err := cache.SplitMetaNamespaceKey(key)
-	if err != nil {
-		return ServiceAccount{}, err
-	}
-	return ServiceAccount{namespace, name}, nil
-}
-
 // VerifiedGSA returns the verified GSA for a given KSA if it has been verified and stored in memory.
 // Otherwise, it calls HMS or Auth server to verify and store the result in memory.
 func (v *Verifier) VerifiedGSA(ctx context.Context, ksa ServiceAccount) (GSAEmail, error) {

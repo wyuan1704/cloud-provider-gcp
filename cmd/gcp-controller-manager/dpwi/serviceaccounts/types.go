@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+
+	"k8s.io/client-go/tools/cache"
 )
 
 // GSAEmail identifies a GCP service account in email format.
@@ -49,6 +51,18 @@ func (sa ServiceAccount) String() string {
 type SAMap struct {
 	sync.RWMutex
 	ma map[ServiceAccount]GSAEmail
+}
+
+func (sa ServiceAccount) Key() string {
+	return fmt.Sprintf("%s/%s", sa.Namespace, sa.Name)
+}
+
+func saFromKey(key string) (ServiceAccount, error) {
+	namespace, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		return ServiceAccount{}, err
+	}
+	return ServiceAccount{namespace, name}, nil
 }
 
 // NewSAMap creates an empty SAMap

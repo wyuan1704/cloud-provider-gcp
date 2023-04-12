@@ -4,6 +4,7 @@ go_library(
     name = "serviceaccounts",
     srcs = [
         "handler.go",
+        "types.go",
         "verifier.go",
     ],
     importpath = "k8s.io/cloud-provider-gcp/cmd/gcp-controller-manager/dpwi/serviceaccounts",
