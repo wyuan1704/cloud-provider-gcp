@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "hms",
@@ -12,5 +12,12 @@ go_library(
         "//vendor/k8s.io/apiserver/pkg/util/webhook",
         "//vendor/k8s.io/client-go/rest",
         "//vendor/k8s.io/client-go/tools/clientcmd/api",
+        "//vendor/k8s.io/klog/v2:klog",
     ],
+)
+
+go_test(
+    name = "hms_test",
+    srcs = ["hms_test.go"],
+    embed = [":hms"],
 )
