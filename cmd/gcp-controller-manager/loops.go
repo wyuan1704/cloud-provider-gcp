@@ -19,10 +19,17 @@ package main
 import (
 	"context"
 	"sort"
+	"time"
 
 	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/cloud-provider-gcp/cmd/gcp-controller-manager/dpwi/configmap"
+	"k8s.io/cloud-provider-gcp/cmd/gcp-controller-manager/dpwi/nodesyncer"
+	"k8s.io/cloud-provider-gcp/cmd/gcp-controller-manager/dpwi/pods"
+	"k8s.io/cloud-provider-gcp/cmd/gcp-controller-manager/dpwi/serviceaccounts"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/controller/certificates"
 )
 
@@ -109,33 +116,74 @@ func loops() map[string]func(context.Context, *controllerContext) error {
 		},
 	}
 	if *directPath {
-		ll[saVerifierControlLoopName] = func(ctx context.Context, controllerCtx *controllerContext) error {
-			serviceAccountVerifier, err := newServiceAccountVerifier(
-				controllerCtx.client,
+		ll["direct-path-with-workload-identity"] = func(ctx context.Context, controllerCtx *controllerContext) error {
+			verifier, err := serviceaccounts.NewVerifier(
 				controllerCtx.sharedInformers.Core().V1().ServiceAccounts(),
-				controllerCtx.sharedInformers.Core().V1().ConfigMaps(),
-				controllerCtx.gcpCfg.Compute,
-				controllerCtx.verifiedSAs,
 				controllerCtx.hmsAuthorizeSAMappingURL,
 			)
 			if err != nil {
 				return err
 			}
-			go serviceAccountVerifier.Run(3, ctx.Done())
-			return nil
-		}
-		ll[nodeSyncerControlLoopName] = func(ctx context.Context, controllerCtx *controllerContext) error {
-			nodeSyncer, err := newNodeSyncer(
+			cmHandler := configmap.NewEventHandler(
+				controllerCtx.client,
+				controllerCtx.sharedInformers.Core().V1().ConfigMaps(),
+				verifier,
+			)
+
+			saSync := controllerCtx.sharedInformers.Core().V1().ServiceAccounts().Informer().HasSynced
+			go func() {
+				start := time.Now()
+				cache.WaitForCacheSync(ctx.Done(), saSync)
+				klog.Infof("Wait %v to start configmap handler", time.Since(start))
+				cmHandler.Run(1, ctx)
+			}()
+
+			syncer, err := nodesyncer.NewEventHandler(
 				controllerCtx.sharedInformers.Core().V1().Pods(),
-				controllerCtx.verifiedSAs,
+				controllerCtx.sharedInformers.Core().V1().Nodes(),
+				verifier,
 				controllerCtx.hmsSyncNodeURL,
 				controllerCtx.client,
-				controllerCtx.delayDirectPathGSARemove,
 			)
 			if err != nil {
-				return err
+				return nil
 			}
-			go nodeSyncer.Run(30, ctx.Done())
+			saHandler := serviceaccounts.NewEventHandler(
+				controllerCtx.sharedInformers.Core().V1().ServiceAccounts(),
+				controllerCtx.sharedInformers.Core().V1().Pods(),
+				verifier,
+				cmHandler.Enqueue,
+				syncer.EnqueueKey,
+			)
+			go func() {
+				start := time.Now()
+				cache.WaitForCacheSync(ctx.Done(), saSync)
+				klog.Infof("Wait %v to start service account handler", time.Since(start))
+				saHandler.Run(3, ctx)
+			}()
+
+			podHandler, err := pods.NewEventHandler(
+				controllerCtx.sharedInformers.Core().V1().Pods().Informer(),
+				verifier,
+				syncer,
+			)
+			if err != nil {
+				return nil
+			}
+			podSync := controllerCtx.sharedInformers.Core().V1().Pods().Informer().HasSynced
+			go func() {
+				start := time.Now()
+				for _, s := range []func() bool{saSync, podSync} {
+					cache.WaitForCacheSync(ctx.Done(), s)
+				}
+				klog.Infof("Wait %v to start podhandler", time.Since(start))
+				podHandler.Run(20, ctx)
+			}()
+			go func() {
+				cache.WaitForCacheSync(ctx.Done(), controllerCtx.sharedInformers.Core().V1().Nodes().Informer().HasSynced)
+				syncer.Run(30, ctx)
+			}()
+
 			return nil
 		}
 	}
